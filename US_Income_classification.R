@@ -226,6 +226,11 @@ test_y <- d_test$income_level
 d_train$train <- NULL
 d_test$train <- NULL
 
+#One hot encodeing
+
+d_train <- createDummyFeatures(d_train,target = "income_level")
+d_test <- createDummyFeatures(d_test,target = "income_level")
+
 # create task
 train.task <- makeClassifTask(data = d_train,target = "income_level")
 test.task <- makeClassifTask(data = d_test, target = "income_level")
@@ -282,3 +287,129 @@ nb_pred <- predict(nb_mdl, test.task)
 #evaluation
 nb_values <- nb_pred$data$response
 confusionMatrix(d_test$income_level,nb_values)
+
+
+## xgboost
+
+set.seed(931992)
+
+xgb_lrn <- makeLearner("classif.xgboost", predict.type = "response")
+getLearnerProperties(xgb_lrn)
+
+xgb_lrn$par.vals <- list(
+                         objective = "binary:logistic",
+                         eval_matric = "error",
+                         nrounds = 150,
+                         print_every_n = 50
+                         )
+
+#hyperparameter for tuning
+xg_ps <- makeParamSet( 
+  makeIntegerParam("max_depth",lower=3,upper=10),
+  makeNumericParam("lambda",lower=0.05,upper=0.3),
+  makeNumericParam("eta", lower = 0.01, upper = 0.3),
+  makeNumericParam("subsample", lower = 0.50, upper = 1),
+  makeNumericParam("min_child_weight",lower=2,upper=10),
+  makeNumericParam("colsample_bytree",lower = 0.50,upper = 0.80)
+  )
+
+# Search function
+ran_control <- makeTuneControlRandom(maxit = 5L)
+
+# 5 CV
+set_cv <- makeResampleDesc("CV", iters = 5L, stratify = TRUE)
+
+# Tune params
+
+xgb_tune <- tuneParams(learner = xgb_lrn,
+                       task = train.task,
+                       resampling = set_cv,
+                       measures = list(acc,tpr,fpr,tnr,fp,fn),
+                       par.set = xg_ps,
+                       control = ran_control)
+xgb_tune
+
+
+# set best parameters
+
+xgb_new <- setHyperPars(learner = xgb_lrn, par.vals = xgb_tune$x)
+
+# train model
+
+xgmodel <- mlr::train(xgb_new, train.task)
+
+# make prediction
+
+pred.xg <- predict(xgmodel,test.task)
+
+# predictions
+
+xg_pred <- pred.xg$data$response
+
+# confusion matrix
+
+confusionMatrix(d_test$income_level,xg_pred)
+
+# xgboost AUC
+
+xgb_prob <- setPredictType(learner = xgb_new, predict.type = "prob")
+xgmodel_prob <- mlr::train(xgb_prob, train.task)
+pred.xgprob <- predict(xgmodel_prob, test.task)
+
+# predicted probabilities
+pred.xgprob$data[1:10,]
+
+df <- generateThreshVsPerfData(pred.xgprob, measures = list(fpr,tpr))
+plotROCCurves(df)
+
+
+# Set threshold as 0.4
+
+pred2 <- setThreshold(pred.xgprob,0.4)
+confusionMatrix(d_test$income_level, pred2$data$response)
+
+pred3 <- setThreshold(pred.xgprob,0.3)
+confusionMatrix(d_test$income_level, pred3$data$response)
+
+
+## SVM
+
+getParamSet("classif.svm")
+
+svm_learner <- makeLearner("classif.svm",predict.type = "response")
+svm_learner$par.vals <- list(class.weights = c("0"=1,"1"=10),
+                             kernel = "radial")
+
+svm_param <- makeParamSet(
+  makeIntegerParam("cost", lower = 0.1, upper = 100),
+  makeIntegerParam("gamma", lower = 0.5, upper = 2)
+)
+
+# random search
+set_srch <- makeTuneControlRandom(maxit=5L)
+
+set_sv <- makeResampleDesc("CV",iters = 5L, stratify = TRUE)
+
+# Tune params
+svm_tune <- tuneParams(learner = svm_learner,
+                       task = train.task,
+                       measures = list(acc,tpr,tnr,fpr,fp,fn), 
+                       par.set = svm_param,
+                       control = set_srch,
+                       resampling = set_sv)
+
+
+
+#set hyperparameters
+svm_new <- setHyperPars(learner = svm_learner, par.vals = svm_tune$x)
+
+#train model
+svm_model <- train(svm_new,train.task)
+
+#test model
+predict_svm <- predict(svm_model,test.task)
+
+confusionMatrix(d_test$income_level,predict_svm$data$response)
+
+
+
