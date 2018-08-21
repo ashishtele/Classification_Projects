@@ -8,3 +8,4 @@
  - Competition link: https://www.drivendata.org/competitions/2/warm-up-predict-blood-donations/submissions/
  - Best Score: 0.46 (log loss)
  - Keras implementation
+ - Ensemble model
